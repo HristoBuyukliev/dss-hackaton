@@ -33,7 +33,7 @@ stopwords = nltk.corpus.stopwords.words("english")
 min_mentions = 10.
 min_df = min_mentions/train.shape[0]
 vectorizer = TfidfVectorizer(
-        stop_words = stopwords, 
+        stop_words = [], 
         encoding='latin-1', 
         ngram_range=(1,3), 
         min_df=min_df)
@@ -108,6 +108,16 @@ for col in range(47):
     lr.fit(X_train, y_train[:, col])
     print "predicting..."
     y_pred[:,col] = lr.predict_proba(X_val)[:,1]
+
+#cosine similarity classification
+# y_pred = np.zeros(y_val.shape)
+# for col in range(47):
+#     knn = KNeighborsClassifier(n_neighbors=20, weights="distance", p=1)
+#     print "fitting..."
+#     knn.fit(X_train, y_train[:, col])
+#     print X_train.shape, y_train[:, col].shape
+#     print "predicting..."
+#     y_pred[:,col] = knn.predict_proba(X_val)[:,1]
 
 threshold = 0.5
 thresholded_pred = (y_pred > threshold).astype('int64')
