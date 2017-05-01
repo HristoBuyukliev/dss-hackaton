@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 import os
 import sys
 import numpy as np
@@ -7,18 +5,20 @@ import pandas as pd
 import re
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-from keras.layers import Dense, Input, Flatten
-from keras.layers import Conv1D, MaxPooling1D, Embedding
+from keras.layers import Dense, Input, Activation
+from keras.layers import Embedding, LSTM
 from keras.models import Model
-
+from keras.layers.wrappers import Bidirectional
+from keras.callbacks import EarlyStopping
+from keras import regularizers, optimizers
+from score import score
 
 # BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 BASE_DIR = "/home/hristo/dss-hackaton"
 GLOVE_DIR = BASE_DIR + '/word-embeddings/'
-TEXT_DATA_DIR = BASE_DIR + '/20_newsgroup/'
-MAX_SEQUENCE_LENGTH = 160
-MAX_NB_WORDS = 1000
-EMBEDDING_DIM = 100
+MAX_SEQUENCE_LENGTH = 60
+MAX_NB_WORDS = 9000
+EMBEDDING_DIM = 300
 VALIDATION_SPLIT = 0.2
 
 # first, build index mapping words in the embeddings set
@@ -27,7 +27,7 @@ VALIDATION_SPLIT = 0.2
 print('Indexing word vectors.')
 
 embeddings_index = {}
-f = open(os.path.join(GLOVE_DIR, 'glove.6B.100d.txt'))
+f = open(os.path.join(GLOVE_DIR, 'glove.6B.300d.txt'))
 for line in f:
     values = line.split()
     word = values[0]
@@ -54,7 +54,7 @@ labels = train[target_cols].values
 print('Found %s texts.' % len(texts))
 
 # finally, vectorize the text samples into a 2D integer tensor
-tokenizer = Tokenizer(nb_words=MAX_NB_WORDS)
+tokenizer = Tokenizer(num_words=MAX_NB_WORDS)
 tokenizer.fit_on_texts(all_texts)
 sequences = tokenizer.texts_to_sequences(texts)
 
@@ -97,28 +97,51 @@ embedding_layer = Embedding(num_words,
                             input_length=MAX_SEQUENCE_LENGTH,
                             trainable=False)
 
+# class Reweigh(keras.callbacks.Callback):
+#     def on_train_begin(self, logs={}):
+#         self.losses = []
+
+#     def on_epoch_end(self, epochs, logs={}):
+#         self.model.sample_weights = np.ones(self.model.training_data.shape[0])
+
+# r = Reweigh()
+
+
+
 print('Training model.')
+es = EarlyStopping(min_delta=0.01, patience=5)
 
-# train a 1D convnet with global maxpooling
-sequence_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
-embedded_sequences = embedding_layer(sequence_input)
-x = Conv1D(32, 5, activation='relu')(embedded_sequences)
-x = MaxPooling1D(5)(x)
-x = Conv1D(32, 5, activation='relu')(x)
-x = MaxPooling1D(5)(x)
-x = Conv1D(32, 5, activation='relu')(x)
-# x = MaxPooling1D(7)(x)
-x = Flatten()(x)
-x = Dense(32, activation='relu')(x)
-preds = Dense(labels.shape[1], activation='sigmoid')(x)
+for penalty in [0.1**i for i in [12,16,20]]:
+    print 'penalty:', penalty
+    sequence_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
+    embedded_sequences = embedding_layer(sequence_input)
+    regularizer = regularizers.l2(penalty)
+    lstm1 = Bidirectional(LSTM(100,
+                name='first-lstm',
+                activation='elu',
+                kernel_regularizer=regularizer, 
+                return_sequences=True))(embedded_sequences)
+    lstm2 = LSTM(47, activation='sigmoid', name='second-lstm')(lstm1)
 
-model = Model(sequence_input, preds)
-model.compile(loss='categorical_crossentropy',
-              optimizer='rmsprop',
-              metrics=['acc'])
+    loss = 'binary_crossentropy'
+    print('loss: ' + loss)
+    model = Model(sequence_input, lstm2)
+    model.compile(loss=loss,
+                  optimizer='rmsprop',
+                  metrics=['acc'])
 
-# happy learning!
-model.fit(x_train, y_train, nb_epoch=10, validation_data=(x_val, y_val), batch_size=128)
 
-y_pred = model.predict(x_val)
-score(y_val, y_pred)
+    model.fit(x_train, y_train, epochs=100, 
+            validation_data=(x_val, y_val), 
+            batch_size=128, 
+            callbacks=[es],
+            verbose=1)
+
+    y_pred = model.predict(x_val)
+    print(y_pred)
+    print(score(y_val, y_pred))
+    thresholds = np.linspace(0,1,11)
+    for threshold in thresholds:
+        print(threshold)
+        print(score(y_val, y_pred, threshold))
+
